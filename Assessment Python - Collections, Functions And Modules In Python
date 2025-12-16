@@ -1,0 +1,75 @@
+attendance_records = []
+def mark_attendance():
+    name = input("Enter Student Name: ")
+    roll = input("Enter Roll Number: ")
+    course = input("Enter Course Name: ")
+    date = input("Enter Date (DD-MM-YYYY): ")
+    status = input("Enter Status (P/A): ").upper()
+
+    if status not in ['P', 'A']:
+        print("Invalid Choice. Use P or A.")
+    for record in attendance_records:
+        if record['roll'] == roll and record['date'] == date:
+            print("Attendance already marked")
+           
+
+    attendance_records.append({
+        'name': name,
+        'roll': roll,
+        'course': course,
+        'date': date,
+        'status': status
+    })
+
+    print("Attendance marked successfully.")
+
+def attendance_report():
+    roll = input("Enter Roll Number to generate report: ")
+
+    total = 0
+    present = 0
+
+    print("\nDate\t\tStatus")
+    print("----------------------")
+
+    for record in attendance_records:
+        if record['roll'] == roll:
+            total += 1
+            print(record['date'], "\t", record['status'])
+            if record['status'] == 'P':
+                present += 1
+
+    if total == 0:
+        print("No records found.")
+        return
+
+    percentage = (present / total) * 100
+    print("\nTotal Days:", total)
+    print("Present:", present)
+    print("Absent:", total - present)
+    print("Attendance Percentage:", round(percentage, 2), "%")
+
+    if percentage < 75:
+        print("Attendance below 75%")
+    else:
+        print("Attendance is satisfactory.")
+
+def main():
+    while True:
+        print("--- EduTrack Attendance System ---")
+        print("1)Mark Attendance")
+        print("2)View Attendance Report")
+        print("3)Exit")
+
+        choice = input("Enter your choice: ")
+
+        if choice == '1':
+            mark_attendance()
+        elif choice == '2':
+            attendance_report()
+        elif choice == '3':
+            print("Exiting EduTrack. Goodbye!")
+            break
+        else:
+            print("Invalid choice. Try again.")
+main()
