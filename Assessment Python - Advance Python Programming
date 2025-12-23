@@ -1,0 +1,889 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import json
+import os
+import re
+from datetime import datetime
+from abc import ABC, abstractmethod
+
+
+class RepairMateException(Exception):
+    
+    pass
+
+class AccessDeniedException(RepairMateException):
+    
+    pass
+
+class InvalidDataException(RepairMateException):
+    
+    pass
+
+class FileOperationException(RepairMateException):
+    
+    pass
+
+#  DATA MODELS 
+class Person:
+    
+    def __init__(self, name, email, phone):
+        self.name = name
+        self.email = email
+        self.phone = phone
+    
+    def get_info(self):
+        return f"{self.name} - {self.email} - {self.phone}"
+
+class Customer(Person):
+    
+    def __init__(self, customer_id, name, email, phone, address=""):
+        super().__init__(name, email, phone)
+        self.customer_id = customer_id
+        self.address = address
+        self.devices = []
+    
+    def add_device(self, device):
+        self.devices.append(device)
+    
+    def to_dict(self):
+        return {
+            'customer_id': self.customer_id,
+            'name': self.name,
+            'email': self.email,
+            'phone': self.phone,
+            'address': self.address,
+            'devices': [d.to_dict() for d in self.devices]
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        customer = cls(
+            data['customer_id'],
+            data['name'],
+            data['email'],
+            data['phone'],
+            data.get('address', '')
+        )
+        customer.devices = [Device.from_dict(d) for d in data.get('devices', [])]
+        return customer
+
+class Device:
+    
+    def __init__(self, device_id, model, brand, device_type, serial_number=""):
+        self.device_id = device_id
+        self.model = model
+        self.brand = brand
+        self.device_type = device_type
+        self.serial_number = serial_number
+    
+    def to_dict(self):
+        return {
+            'device_id': self.device_id,
+            'model': self.model,
+            'brand': self.brand,
+            'device_type': self.device_type,
+            'serial_number': self.serial_number
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            data['device_id'],
+            data['model'],
+            data['brand'],
+            data['device_type'],
+            data.get('serial_number', '')
+        )
+
+class RepairOrder:
+    
+    def __init__(self, order_id, customer_id, device_id, issue, 
+                 technician="", status="Pending", service_cost=0, parts_cost=0, tax_rate=0.10):
+        self.order_id = order_id
+        self.customer_id = customer_id
+        self.device_id = device_id
+        self.issue = issue
+        self.technician = technician
+        self.status = status
+        self.service_cost = service_cost
+        self.parts_cost = parts_cost
+        self.tax_rate = tax_rate
+        self.date_created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    def calculate_total(self):
+        
+        try:
+            subtotal = float(self.service_cost) + float(self.parts_cost)
+            tax = subtotal * self.tax_rate
+            total = subtotal + tax
+            return subtotal, tax, total
+        except (ValueError, TypeError):
+            raise InvalidDataException("Invalid cost values for calculation")
+    
+    def to_dict(self):
+        return {
+            'order_id': self.order_id,
+            'customer_id': self.customer_id,
+            'device_id': self.device_id,
+            'issue': self.issue,
+            'technician': self.technician,
+            'status': self.status,
+            'service_cost': self.service_cost,
+            'parts_cost': self.parts_cost,
+            'tax_rate': self.tax_rate,
+            'date_created': self.date_created
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        order = cls(
+            data['order_id'],
+            data['customer_id'],
+            data['device_id'],
+            data['issue'],
+            data.get('technician', ''),
+            data.get('status', 'Pending'),
+            data.get('service_cost', 0),
+            data.get('parts_cost', 0),
+            data.get('tax_rate', 0.10)
+        )
+        order.date_created = data.get('date_created', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        return order
+
+#  USER MANAGEMENT 
+class User(ABC):
+   
+    def __init__(self, username, password, role):
+        self.username = username
+        self.password = password
+        self.role = role
+    
+    @abstractmethod
+    def get_permissions(self):
+        pass
+    
+    def to_dict(self):
+        return {
+            'username': self.username,
+            'password': self.password,
+            'role': self.role
+        }
+
+class Admin(User):
+    
+    def __init__(self, username, password):
+        super().__init__(username, password, "Admin")
+    
+    def get_permissions(self):
+        return ["create_customer", "update_customer", "create_order", 
+                "update_order", "billing", "reports", "user_management"]
+
+class Technician(User):
+  
+    def __init__(self, username, password):
+        super().__init__(username, password, "Technician")
+    
+    def get_permissions(self):
+        return ["view_customer", "create_order", "update_order", "reports"]
+
+#  FILE MANAGER 
+class FileManager:
+    
+    def __init__(self, data_dir="repairmate_data"):
+        self.data_dir = data_dir
+        self._ensure_directory()
+        self.customers_file = os.path.join(data_dir, "customers.json")
+        self.orders_file = os.path.join(data_dir, "orders.json")
+        self.users_file = os.path.join(data_dir, "users.json")
+        self.invoices_dir = os.path.join(data_dir, "invoices")
+        self._ensure_files()
+    
+    def _ensure_directory(self):
+        
+        try:
+            if not os.path.exists(self.data_dir):
+                os.makedirs(self.data_dir)
+            invoices_dir = os.path.join(self.data_dir, "invoices")
+            if not os.path.exists(invoices_dir):
+                os.makedirs(invoices_dir)
+        except OSError as e:
+            raise FileOperationException(f"Failed to create directory: {e}")
+    
+    def _ensure_files(self):
+        
+        try:
+            for file in [self.customers_file, self.orders_file, self.users_file]:
+                if not os.path.exists(file):
+                    with open(file, 'w') as f:
+                        json.dump([], f)
+            
+            # Create default admin user if users file is empty
+            users = self.load_users()
+            if not users:
+                admin = Admin("admin", "admin123")
+                tech = Technician("tech", "tech123")
+                self.save_users([admin.to_dict(), tech.to_dict()])
+        except Exception as e:
+            raise FileOperationException(f"Failed to initialize files: {e}")
+    
+    def load_customers(self):
+       
+        try:
+            with open(self.customers_file, 'r') as f:
+                data = json.load(f)
+                return [Customer.from_dict(c) for c in data]
+        except FileNotFoundError:
+            return []
+        except json.JSONDecodeError:
+            raise FileOperationException("Corrupted customers file")
+    
+    def save_customers(self, customers):
+        
+        try:
+            with open(self.customers_file, 'w') as f:
+                json.dump([c.to_dict() for c in customers], f, indent=2)
+        except Exception as e:
+            raise FileOperationException(f"Failed to save customers: {e}")
+    
+    def load_orders(self):
+        
+        try:
+            with open(self.orders_file, 'r') as f:
+                data = json.load(f)
+                return [RepairOrder.from_dict(o) for o in data]
+        except FileNotFoundError:
+            return []
+        except json.JSONDecodeError:
+            raise FileOperationException("Corrupted orders file")
+    
+    def save_orders(self, orders):
+        
+        try:
+            with open(self.orders_file, 'w') as f:
+                json.dump([o.to_dict() for o in orders], f, indent=2)
+        except Exception as e:
+            raise FileOperationException(f"Failed to save orders: {e}")
+    
+    def load_users(self):
+       
+        try:
+            with open(self.users_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return []
+        except json.JSONDecodeError:
+            raise FileOperationException("Corrupted users file")
+    
+    def save_users(self, users):
+     
+        try:
+            with open(self.users_file, 'w') as f:
+                json.dump(users, f, indent=2)
+        except Exception as e:
+            raise FileOperationException(f"Failed to save users: {e}")
+    
+    def save_invoice(self, order_id, content):
+        """Save invoice to text file"""
+        try:
+            filename = os.path.join(self.invoices_dir, f"invoice_{order_id}.txt")
+            with open(filename, 'w') as f:
+                f.write(content)
+            return filename
+        except Exception as e:
+            raise FileOperationException(f"Failed to save invoice: {e}")
+
+#  MAIN APPLICATION 
+class RepairMateApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("RepairMate - Login")
+        self.root.geometry("400x300")
+        
+        self.file_manager = FileManager()
+        self.current_user = None
+        self.customers = []
+        self.orders = []
+        
+        self.show_login()
+    
+    def show_login(self):
+        
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        self.root.geometry("400x300")
+        
+        frame = ttk.Frame(self.root, padding="20")
+        frame.pack(expand=True)
+        
+        ttk.Label(frame, text="RepairMate Login", font=("Arial", 16, "bold")).grid(row=0, column=0, columnspan=2, pady=20)
+        
+        ttk.Label(frame, text="Username:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        username_entry = ttk.Entry(frame, width=20)
+        username_entry.grid(row=1, column=1, pady=5)
+        
+        ttk.Label(frame, text="Password:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        password_entry = ttk.Entry(frame, width=20, show="*")
+        password_entry.grid(row=2, column=1, pady=5)
+        
+        def login():
+            try:
+                username = username_entry.get().strip()
+                password = password_entry.get().strip()
+                
+                if not username or not password:
+                    raise InvalidDataException("Username and password required")
+                
+                users = self.file_manager.load_users()
+                user_data = next((u for u in users if u['username'] == username and u['password'] == password), None)
+                
+                if user_data:
+                    if user_data['role'] == "Admin":
+                        self.current_user = Admin(username, password)
+                    else:
+                        self.current_user = Technician(username, password)
+                    
+                    self.load_data()
+                    self.show_main_app()
+                else:
+                    messagebox.showerror("Error", "Invalid credentials")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        ttk.Button(frame, text="Login", command=login).grid(row=3, column=0, columnspan=2, pady=20)
+        
+        # Info label
+        info_text = "Default users:\nAdmin: admin/admin123\nTechnician: tech/tech123"
+        ttk.Label(frame, text=info_text, font=("Arial", 8), foreground="gray").grid(row=4, column=0, columnspan=2)
+    
+    def load_data(self):
+        
+        try:
+            self.customers = self.file_manager.load_customers()
+            self.orders = self.file_manager.load_orders()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load data: {e}")
+    
+    def show_main_app(self):
+       
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        self.root.title(f"RepairMate - {self.current_user.role}: {self.current_user.username}")
+        self.root.geometry("900x600")
+        
+        # Top bar
+        top_frame = ttk.Frame(self.root)
+        top_frame.pack(side="top", fill="x", padx=5, pady=5)
+        
+        ttk.Label(top_frame, text=f"Logged in as: {self.current_user.username} ({self.current_user.role})", 
+                 font=("Arial", 10)).pack(side="left")
+        ttk.Button(top_frame, text="Logout", command=self.show_login).pack(side="right")
+        
+        # Notebook for tabs
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(expand=True, fill="both", padx=5, pady=5)
+        
+        # Tabs based on permissions
+        permissions = self.current_user.get_permissions()
+        
+        if "create_customer" in permissions:
+            notebook.add(self.create_customer_tab(), text="Customers")
+        
+        if "create_order" in permissions:
+            notebook.add(self.create_order_tab(), text="Repair Orders")
+        
+        if "billing" in permissions:
+            notebook.add(self.create_billing_tab(), text="Billing")
+        
+        if "reports" in permissions:
+            notebook.add(self.create_reports_tab(), text="Reports")
+    
+    def create_customer_tab(self):
+        
+        frame = ttk.Frame()
+        
+        # Form frame
+        form_frame = ttk.LabelFrame(frame, text="Customer Information", padding="10")
+        form_frame.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        
+        # Customer fields
+        ttk.Label(form_frame, text="Name:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        name_entry = ttk.Entry(form_frame, width=30)
+        name_entry.grid(row=0, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Email:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        email_entry = ttk.Entry(form_frame, width=30)
+        email_entry.grid(row=1, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Phone:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        phone_entry = ttk.Entry(form_frame, width=30)
+        phone_entry.grid(row=2, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Address:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        address_entry = ttk.Entry(form_frame, width=30)
+        address_entry.grid(row=3, column=1, pady=5)
+        
+        # Device fields
+        ttk.Label(form_frame, text="Device Model:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+        model_entry = ttk.Entry(form_frame, width=30)
+        model_entry.grid(row=4, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Brand:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
+        brand_entry = ttk.Entry(form_frame, width=30)
+        brand_entry.grid(row=5, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Type:").grid(row=6, column=0, sticky="e", padx=5, pady=5)
+        type_entry = ttk.Entry(form_frame, width=30)
+        type_entry.grid(row=6, column=1, pady=5)
+        
+        def save_customer():
+            try:
+                name = name_entry.get().strip()
+                email = email_entry.get().strip()
+                phone = phone_entry.get().strip()
+                
+                if not all([name, email, phone]):
+                    raise InvalidDataException("Name, email, and phone are required")
+                
+                # Email validation
+                if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', email):
+                    raise InvalidDataException("Invalid email format")
+                
+                # Phone validation
+                if not re.match(r'^\+?[\d\s\-()]+$', phone):
+                    raise InvalidDataException("Invalid phone format")
+                
+                customer_id = f"C{len(self.customers) + 1:04d}"
+                customer = Customer(customer_id, name, email, phone, address_entry.get().strip())
+                
+                # Add device if provided
+                if model_entry.get().strip():
+                    device_id = f"D{len(customer.devices) + 1:04d}"
+                    device = Device(device_id, model_entry.get().strip(), 
+                                  brand_entry.get().strip(), type_entry.get().strip())
+                    customer.add_device(device)
+                
+                self.customers.append(customer)
+                self.file_manager.save_customers(self.customers)
+                
+                messagebox.showinfo("Success", f"Customer {customer_id} created successfully!")
+                
+                # Clear form
+                for entry in [name_entry, email_entry, phone_entry, address_entry, 
+                            model_entry, brand_entry, type_entry]:
+                    entry.delete(0, tk.END)
+                
+                refresh_list()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        ttk.Button(form_frame, text="Save Customer", command=save_customer).grid(row=7, column=0, columnspan=2, pady=10)
+        
+        # List frame
+        list_frame = ttk.LabelFrame(frame, text="Customer List", padding="10")
+        list_frame.pack(side="right", fill="both", expand=True, padx=5, pady=5)
+        
+        # Treeview
+        columns = ("ID", "Name", "Email", "Phone")
+        tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100)
+        tree.pack(side="left", fill="both", expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        def refresh_list():
+            tree.delete(*tree.get_children())
+            for customer in self.customers:
+                tree.insert("", "end", values=(customer.customer_id, customer.name, 
+                                              customer.email, customer.phone))
+        
+        refresh_list()
+        
+        return frame
+    
+    def create_order_tab(self):
+     
+        frame = ttk.Frame()
+        
+        # Form frame
+        form_frame = ttk.LabelFrame(frame, text="New Repair Order", padding="10")
+        form_frame.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        
+        ttk.Label(form_frame, text="Customer ID:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        customer_combo = ttk.Combobox(form_frame, width=28)
+        customer_combo['values'] = [c.customer_id for c in self.customers]
+        customer_combo.grid(row=0, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Device:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        device_combo = ttk.Combobox(form_frame, width=28)
+        device_combo.grid(row=1, column=1, pady=5)
+        
+        def update_devices(event):
+            customer_id = customer_combo.get()
+            customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+            if customer:
+                device_combo['values'] = [f"{d.device_id}: {d.brand} {d.model}" for d in customer.devices]
+        
+        customer_combo.bind("<<ComboboxSelected>>", update_devices)
+        
+        ttk.Label(form_frame, text="Issue Description:").grid(row=2, column=0, sticky="ne", padx=5, pady=5)
+        issue_text = tk.Text(form_frame, width=30, height=5)
+        issue_text.grid(row=2, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Technician:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        tech_entry = ttk.Entry(form_frame, width=30)
+        tech_entry.insert(0, self.current_user.username)
+        tech_entry.grid(row=3, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Status:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+        status_combo = ttk.Combobox(form_frame, width=28, values=["Pending", "In Progress", "Completed", "Cancelled"])
+        status_combo.set("Pending")
+        status_combo.grid(row=4, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Service Cost:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
+        service_entry = ttk.Entry(form_frame, width=30)
+        service_entry.insert(0, "0")
+        service_entry.grid(row=5, column=1, pady=5)
+        
+        ttk.Label(form_frame, text="Parts Cost:").grid(row=6, column=0, sticky="e", padx=5, pady=5)
+        parts_entry = ttk.Entry(form_frame, width=30)
+        parts_entry.insert(0, "0")
+        parts_entry.grid(row=6, column=1, pady=5)
+        
+        def save_order():
+            try:
+                customer_id = customer_combo.get()
+                device_info = device_combo.get()
+                issue = issue_text.get("1.0", tk.END).strip()
+                
+                if not all([customer_id, device_info, issue]):
+                    raise InvalidDataException("Customer, device, and issue are required")
+                
+                device_id = device_info.split(":")[0]
+                technician = tech_entry.get().strip()
+                status = status_combo.get()
+                
+                try:
+                    service_cost = float(service_entry.get())
+                    parts_cost = float(parts_entry.get())
+                except ValueError:
+                    raise InvalidDataException("Costs must be numeric values")
+                
+                order_id = f"R{len(self.orders) + 1:04d}"
+                order = RepairOrder(order_id, customer_id, device_id, issue, 
+                                  technician, status, service_cost, parts_cost)
+                
+                self.orders.append(order)
+                self.file_manager.save_orders(self.orders)
+                
+                messagebox.showinfo("Success", f"Repair order {order_id} created successfully!")
+                
+                # Clear form
+                issue_text.delete("1.0", tk.END)
+                service_entry.delete(0, tk.END)
+                service_entry.insert(0, "0")
+                parts_entry.delete(0, tk.END)
+                parts_entry.insert(0, "0")
+                
+                refresh_orders()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        ttk.Button(form_frame, text="Create Order", command=save_order).grid(row=7, column=0, columnspan=2, pady=10)
+        
+        # List frame
+        list_frame = ttk.LabelFrame(frame, text="Repair Orders", padding="10")
+        list_frame.pack(side="right", fill="both", expand=True, padx=5, pady=5)
+        
+        columns = ("Order ID", "Customer", "Status", "Technician")
+        tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100)
+        tree.pack(side="left", fill="both", expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        def refresh_orders():
+            tree.delete(*tree.get_children())
+            for order in self.orders:
+                tree.insert("", "end", values=(order.order_id, order.customer_id, 
+                                              order.status, order.technician))
+        
+        refresh_orders()
+        
+        return frame
+    
+    def create_billing_tab(self):
+      
+        frame = ttk.Frame()
+        
+        # Selection frame
+        select_frame = ttk.LabelFrame(frame, text="Select Order", padding="10")
+        select_frame.pack(side="top", fill="x", padx=5, pady=5)
+        
+        ttk.Label(select_frame, text="Order ID:").pack(side="left", padx=5)
+        order_combo = ttk.Combobox(select_frame, width=20)
+        order_combo['values'] = [o.order_id for o in self.orders]
+        order_combo.pack(side="left", padx=5)
+        
+        # Invoice display
+        invoice_frame = ttk.LabelFrame(frame, text="Invoice", padding="10")
+        invoice_frame.pack(side="top", fill="both", expand=True, padx=5, pady=5)
+        
+        invoice_text = scrolledtext.ScrolledText(invoice_frame, width=70, height=20)
+        invoice_text.pack(fill="both", expand=True)
+        
+        def generate_invoice():
+            try:
+                order_id = order_combo.get()
+                if not order_id:
+                    raise InvalidDataException("Please select an order")
+                
+                order = next((o for o in self.orders if o.order_id == order_id), None)
+                if not order:
+                    raise InvalidDataException("Order not found")
+                
+                customer = next((c for c in self.customers if c.customer_id == order.customer_id), None)
+                if not customer:
+                    raise InvalidDataException("Customer not found")
+                
+                device = None
+                for d in customer.devices:
+                    if d.device_id == order.device_id:
+                        device = d
+                        break
+                
+                subtotal, tax, total = order.calculate_total()
+                
+                invoice = f"""
+{'='*60}
+                    REPAIRMATE INVOICE
+{'='*60}
+
+Order ID: {order.order_id}
+Date: {order.date_created}
+
+CUSTOMER INFORMATION:
+Name: {customer.name}
+Email: {customer.email}
+Phone: {customer.phone}
+Address: {customer.address}
+
+DEVICE INFORMATION:
+Model: {device.model if device else 'N/A'}
+Brand: {device.brand if device else 'N/A'}
+Type: {device.device_type if device else 'N/A'}
+
+REPAIR DETAILS:
+Issue: {order.issue}
+Technician: {order.technician}
+Status: {order.status}
+
+{'='*60}
+BILLING DETAILS:
+{'='*60}
+Service Cost:                             ${order.service_cost:,.2f}
+Parts Cost:                               ${order.parts_cost:,.2f}
+                                          ----------
+Subtotal:                                 ${subtotal:,.2f}
+Tax ({order.tax_rate*100}%):                                  ${tax:,.2f}
+                                          ----------
+TOTAL:                                    ${total:,.2f}
+{'='*60}
+
+Thank you for choosing RepairMate!
+"""
+                invoice_text.delete("1.0", tk.END)
+                invoice_text.insert("1.0", invoice)
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        def save_invoice_file():
+            try:
+                content = invoice_text.get("1.0", tk.END)
+                if not content.strip():
+                    raise InvalidDataException("Generate an invoice first")
+                
+                order_id = order_combo.get()
+                filepath = self.file_manager.save_invoice(order_id, content)
+                messagebox.showinfo("Success", f"Invoice saved to:\n{filepath}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        button_frame = ttk.Frame(select_frame)
+        button_frame.pack(side="left", padx=20)
+        
+        ttk.Button(button_frame, text="Generate Invoice", command=generate_invoice).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Save to File", command=save_invoice_file).pack(side="left", padx=5)
+        
+        return frame
+    
+    def create_reports_tab(self):
+        
+        frame = ttk.Frame()
+        
+        # Search frame
+        search_frame = ttk.LabelFrame(frame, text="Search & Filter", padding="10")
+        search_frame.pack(side="top", fill="x", padx=5, pady=5)
+        
+        ttk.Label(search_frame, text="Search Type:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        search_type = ttk.Combobox(search_frame, width=20, 
+                                   values=["Device Model", "Status", "Customer Name", "Order ID"])
+        search_type.set("Status")
+        search_type.grid(row=0, column=1, pady=5, padx=5)
+        
+        ttk.Label(search_frame, text="Search Pattern:").grid(row=0, column=2, sticky="e", padx=5, pady=5)
+        search_entry = ttk.Entry(search_frame, width=25)
+        search_entry.grid(row=0, column=3, pady=5, padx=5)
+        
+        # Results display
+        results_frame = ttk.LabelFrame(frame, text="Search Results", padding="10")
+        results_frame.pack(side="top", fill="both", expand=True, padx=5, pady=5)
+        
+        columns = ("Order ID", "Customer", "Device", "Status", "Technician", "Total Cost")
+        tree = ttk.Treeview(results_frame, columns=columns, show="headings", height=15)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100)
+        tree.pack(side="left", fill="both", expand=True)
+        
+        scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        def perform_search():
+            try:
+                tree.delete(*tree.get_children())
+                
+                search_field = search_type.get()
+                pattern = search_entry.get().strip()
+                
+                if not pattern:
+                    raise InvalidDataException("Enter a search pattern")
+                
+               
+                try:
+                    regex = re.compile(pattern, re.IGNORECASE)
+                except re.error:
+                    raise InvalidDataException("Invalid regex pattern")
+                
+                results = []
+                
+                for order in self.orders:
+                    match = False
+                    
+                   
+                    customer = next((c for c in self.customers if c.customer_id == order.customer_id), None)
+                    device = None
+                    if customer:
+                        device = next((d for d in customer.devices if d.device_id == order.device_id), None)
+                    
+                    if search_field == "Status" and regex.search(order.status):
+                        match = True
+                    elif search_field == "Order ID" and regex.search(order.order_id):
+                        match = True
+                    elif search_field == "Customer Name" and customer and regex.search(customer.name):
+                        match = True
+                    elif search_field == "Device Model" and device and regex.search(device.model):
+                        match = True
+                    
+                    if match:
+                        try:
+                            _, _, total = order.calculate_total()
+                        except:
+                            total = 0
+                        
+                        results.append({
+                            'order': order,
+                            'customer': customer.name if customer else 'N/A',
+                            'device': f"{device.brand} {device.model}" if device else 'N/A',
+                            'total': total
+                        })
+             
+                for result in results:
+                    order = result['order']
+                    tree.insert("", "end", values=(
+                        order.order_id,
+                        result['customer'],
+                        result['device'],
+                        order.status,
+                        order.technician,
+                        f"${result['total']:,.2f}"
+                    ))
+                
+                messagebox.showinfo("Search Complete", f"Found {len(results)} matching orders")
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        def show_all():
+            tree.delete(*tree.get_children())
+            for order in self.orders:
+                customer = next((c for c in self.customers if c.customer_id == order.customer_id), None)
+                device = None
+                if customer:
+                    device = next((d for d in customer.devices if d.device_id == order.device_id), None)
+                
+                try:
+                    _, _, total = order.calculate_total()
+                except:
+                    total = 0
+                
+                tree.insert("", "end", values=(
+                    order.order_id,
+                    customer.name if customer else 'N/A',
+                    f"{device.brand} {device.model}" if device else 'N/A',
+                    order.status,
+                    order.technician,
+                    f"${total:,.2f}"
+                ))
+        
+        ttk.Button(search_frame, text="Search", command=perform_search).grid(row=0, column=4, padx=5)
+        ttk.Button(search_frame, text="Show All", command=show_all).grid(row=0, column=5, padx=5)
+        
+      
+        stats_frame = ttk.LabelFrame(frame, text="Statistics", padding="10")
+        stats_frame.pack(side="bottom", fill="x", padx=5, pady=5)
+        
+        def update_stats():
+            total_customers = len(self.customers)
+            total_orders = len(self.orders)
+            pending = len([o for o in self.orders if o.status == "Pending"])
+            completed = len([o for o in self.orders if o.status == "Completed"])
+            
+            stats_text = f"Total Customers: {total_customers}  |  Total Orders: {total_orders}  |  Pending: {pending}  |  Completed: {completed}"
+            stats_label.config(text=stats_text)
+        
+        stats_label = ttk.Label(stats_frame, text="", font=("Arial", 10))
+        stats_label.pack()
+        
+        ttk.Button(stats_frame, text="Refresh Statistics", command=update_stats).pack(pady=5)
+        
+        # Initial display
+        show_all()
+        update_stats()
+        
+        return frame
+
+def main():
+    
+    try:
+        root = tk.Tk()
+        app = RepairMateApp(root)
+        root.mainloop()
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        messagebox.showerror("Fatal Error", f"Application failed to start: {e}")
+
+if __name__ == "__main__":
+    main()
