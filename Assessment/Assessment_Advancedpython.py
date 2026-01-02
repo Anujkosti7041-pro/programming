@@ -6,7 +6,6 @@ import re
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-
 class RepairMateException(Exception):
     
     pass
