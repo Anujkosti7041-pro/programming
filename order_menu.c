@@ -1,10 +1,10 @@
 #include<iostream>
 using namespace std;
 
-class Menu{ //this class have all menu and sub menu
+class Menu{ 
 		
 		public:
-			//display main menu
+			
 			mymenu()
 			{
 				cout<<"1) Pizzas "<<endl;
@@ -13,7 +13,7 @@ class Menu{ //this class have all menu and sub menu
 				cout<<"4) Rolls "<<endl;
 				cout<<"5) Biryani "<<endl;
 			}
-			//display submenu pizza
+			
 			submenu_pizza()
 			{
 				cout<<"Margherita Pizza...199/-"<<endl;
@@ -21,7 +21,7 @@ class Menu{ //this class have all menu and sub menu
 				cout<<"Cheese Burst.......279/-"<<endl;
 				cout<<endl;
 			}
-			//display submenu burger
+			
 			submenu_burger()
 			{
 				cout<<"Veg Cheeseburger.......99/-"<<endl;
@@ -29,7 +29,7 @@ class Menu{ //this class have all menu and sub menu
 				cout<<"Aloo Tikki Burger......89/-"<<endl;
 				cout<<endl;
 			}
-			//display submenu sandwich
+			
 			submenu_sandwich()
 			{
 				cout<<"Veg Club Sandwich.........349/-"<<endl;
@@ -37,7 +37,7 @@ class Menu{ //this class have all menu and sub menu
 				cout<<"Grilled Cheese Sandwich...249/-"<<endl;
 				cout<<endl;
 			}
-			//display submenu rolls
+			
 			submenu_roll()
 			{
 				cout<<"Veg Frankie............99/-"<<endl;
@@ -45,7 +45,7 @@ class Menu{ //this class have all menu and sub menu
 				cout<<"Soya Chaap Roll........179/-"<<endl;
 				cout<<endl;
 			}
-			//display submenu biryani
+			
 			submenu_biryani()
 			{
 				cout<<"Paneer Biryani..........249/-"<<endl;
@@ -57,22 +57,22 @@ class Menu{ //this class have all menu and sub menu
 
 class food:public Menu{
 	public:
-		int type; //which type of item want to order from submenu
-		int quntity;// how many quntity want in order 
-		int choice;// select from main menu which food do you want 
-		int price; // submenu every item price 
-		string item;// sub menu every item name
+		int type; 
+		int quntity; 
+		int choice; 
+		int price;  
+		string item;
 		order()
 		{
-			mymenu(); //display the main menu
+			mymenu();
 			cout<<endl; 
 		
 		
-		cout<<"Please enter your choice: "; //select from main menu which food do user want
-		cin>>choice; // user choice
+		cout<<"Please enter your choice: ";
+		cin>>choice; 
 		cout<<endl;
 	
-	switch(choice) // based on user choice this will show user their menu
+	switch(choice) 
 	{
 		case 1:
 			submenu_pizza();
@@ -200,9 +200,9 @@ class food:public Menu{
 	
 	cout<<endl;
 	
-	int total = price*quntity; // makeing bill for user
-	cout<<quntity<<" "<<item<<endl; // printing quntity and item name that user will buy
-	cout<<"Your Bill is"<<total<<endl;  // giving user bill
+	int total = price*quntity;
+	cout<<quntity<<" "<<item<<endl; 
+	cout<<"Your Bill is"<<total<<endl;  
 	cout<<"your order will be ready in 40 minutes"<<endl<<"Thankyou for ordering from our center"<<endl;	
 }
 };
@@ -211,19 +211,18 @@ class food:public Menu{
 main()
 {
 	cout<<"\t\t\t\t-----------Fast Food-----------\t\t\t"<<endl;
-	string name; // for user name
-	char ch; // if user want to buy any otherthing it will be given choice
-	//entry section
+	string name; 
+	char ch; 
 	cout<<"Enter your name: ";
 	cin>>name;
 	cout<<"Hello "<<name<<"!!"<<endl;
 	cout<<endl;
 	cout<<"What would you like to order?"<<endl;
 	cout<<endl;
-	//menu section
+	
 	cout<<"\t\t\t\t-----------Menu-----------\t\t\t"<<endl;
 
-	//make object and call
+
 	food obj;
 	obj.order();
 	
@@ -233,13 +232,13 @@ while(1)
 	cin>>ch; 
 	cout<<endl;
 	
-	if(ch =='y' || ch =='Y') //if user say yes print full menu via objact
+	if(ch =='y' || ch =='Y') 
 	{
 		obj.order();
 	}
 	else
 	{
-		cout<<"Thankyou"<<endl; // if user write no it will exit the program 
+		cout<<"Thankyou"<<endl; 
 		break;
 	}
 	cout<<endl;
